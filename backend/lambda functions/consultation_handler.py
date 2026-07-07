@@ -1,30 +1,38 @@
 """
 AngelLambda.py — original Lex fulfillment PLUS dynamic-form handlers.
+
 The router (LexApiHandler) invokes this Lambda directly with a payload like:
   { "formAction": "INIT" | "SUBMIT" | "CONFIRM",
     "bot": "angel", "sessionId": "...", "values": { ... } }
+
 Any event WITHOUT `formAction` is treated as a normal Lex event and delegated
 to the original handler at the bottom of this file (unchanged behavior).
 """
+
 import json
 import re
 import datetime
 import uuid
+
 # --- MOCK DATABASE ---
 BOOKED_APPOINTMENTS = {
     "2026-06-30": ["09:00", "14:00"],
     "2026-07-01": ["10:00", "15:00", "16:00"]
 }
+
 VALID_PRODUCTS = ["Refrigerator", "Television", "Washing Machine", "Dish Washer"]
+
 # --- HELPER FUNCTIONS (unchanged) ---
 def validate_phone(phone_number):
     if not phone_number: return False
     cleaned = ''.join(filter(str.isdigit, phone_number))
     return len(cleaned) == 10
+
 def validate_email(email_address):
     if not email_address: return False
     regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
     return bool(re.match(regex, email_address))
+
 def get_business_days():
     utc_now = datetime.datetime.utcnow()
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
@@ -48,6 +56,7 @@ def get_business_days():
         current_date += datetime.timedelta(days=1)
         lookahead += 1
     return valid_days, button_days
+
 def get_available_times(date_str):
     utc_now = datetime.datetime.utcnow()
     ist_now = utc_now + datetime.timedelta(hours=5, minutes=30)
@@ -64,6 +73,7 @@ def get_available_times(date_str):
         text_12h = f"{str(display_h).zfill(2)}:00 {ampm}"
         all_times.append({"text": text_12h, "value": text_12h, "val_24h": val_24h})
     return all_times
+
 def normalize_time(raw):
     if not raw: return ""
     raw = raw.strip()
@@ -76,9 +86,12 @@ def normalize_time(raw):
         else: h = 12 if h == 12 else h + 12
         return f"{h:02d}:{m}"
     return raw
+
+
 # =====================================================================
 # DYNAMIC FORM HANDLERS  (new — additive, do not change Lex logic)
 # =====================================================================
+
 def _form_schema():
     """Return the JSON schema the frontend renders."""
     _, date_buttons = get_business_days()
@@ -100,24 +113,25 @@ def _form_schema():
              "options": [{"text": p, "value": p} for p in VALID_PRODUCTS]},
             {"name": "Date",        "label": "Preferred date", "type": "date-grid",
              "required": True, "options": date_buttons},
-            # Time list is loaded up-front for the earliest date; the frontend
-            # keeps it simple by showing all standard slots and letting the
-            # backend re-validate against real availability on submit.
+            # Time list is all standard slots; the backend re-validates
+            # against real availability on submit.
             {"name": "Time",        "label": "Preferred time", "type": "time-grid",
              "required": True,
-             "options": [{"text": t["text"], "value": t["text"]}
-                         for t in [
-                             {"text": f"{h:02d}:00 {'AM' if h < 12 else 'PM'}"} if False else
-                             {"text": f"{(h if h<=12 else h-12):02d}:00 {'AM' if h<12 else 'PM'}"}
-                             for h in range(9, 18)
-                         ]]}
+             "options": [
+                 {"text": f"{(h if h <= 12 else h - 12):02d}:00 {'AM' if h < 12 else 'PM'}",
+                  "value": f"{(h if h <= 12 else h - 12):02d}:00 {'AM' if h < 12 else 'PM'}"}
+                 for h in range(9, 18)
+             ]}
         ]
     }
+
+
 def _validate_form(values):
     errors = {}
     def req(name, label):
         if not values.get(name) or not str(values[name]).strip():
             errors[name] = f"{label} is required."
+
     req("FirstName",    "First name")
     req("LastName",     "Last name")
     req("PhoneNumber",  "Phone")
@@ -125,6 +139,7 @@ def _validate_form(values):
     req("ProductName",  "Product")
     req("Date",         "Date")
     req("Time",         "Time")
+
     phone = values.get("PhoneNumber", "")
     if phone and not validate_phone(phone):
         errors["PhoneNumber"] = "Enter exactly 10 digits."
@@ -144,6 +159,8 @@ def _validate_form(values):
         if not any(t["text"].lower() == time_str.lower() for t in avail):
             errors["Time"] = "That time slot is no longer available."
     return errors
+
+
 def _save_booking(values, session_id):
     """
     Persist the booking. Replace this stub with DynamoDB / RDS / SES calls.
@@ -155,15 +172,20 @@ def _save_booking(values, session_id):
     # })
     print(f"[angel] booking saved ref={ref} session={session_id} values={values}")
     return ref
+
+
 def _form_response(messages=None, session_attrs=None):
     return {
         "messages": messages or [],
         "sessionAttributes": session_attrs or {}
     }
+
+
 def handle_form_event(event):
     action = (event.get("formAction") or "").upper()
     values = event.get("values", {}) or {}
     session_id = event.get("sessionId", "")
+
     if action == "INIT":
         schema = _form_schema()
         return _form_response(
@@ -171,6 +193,7 @@ def handle_form_event(event):
                        "content": "Please fill in the form below to book your consultation."}],
             session_attrs={"formSchema": json.dumps(schema)}
         )
+
     if action == "SUBMIT":
         errors = _validate_form(values)
         if errors:
@@ -192,6 +215,7 @@ def handle_form_event(event):
             ]
         }
         return _form_response(session_attrs={"formSummary": json.dumps(summary)})
+
     if action == "CONFIRM":
         errors = _validate_form(values)
         if errors:
@@ -207,11 +231,15 @@ def handle_form_event(event):
             "referenceId": ref
         }
         return _form_response(session_attrs={"formSuccess": json.dumps(success)})
+
     return _form_response(messages=[{"contentType": "PlainText",
                                      "content": f"Unknown form action: {action}"}])
+
+
 # =====================================================================
 # LEX FULFILLMENT (original — unchanged)
 # =====================================================================
+
 def build_button_response(intent, slot_to_elicit, message_text, button_options, session_attributes=None):
     attrs = dict(session_attributes) if session_attributes is not None else {}
     if button_options:
@@ -230,10 +258,13 @@ def build_button_response(intent, slot_to_elicit, message_text, button_options, 
         },
         "messages": [{"contentType": "PlainText", "content": message_text}]
     }
+
+
 def lambda_handler(event, context):
     # ---- Dynamic-form bypass ----
     if isinstance(event, dict) and event.get("formAction"):
         return handle_form_event(event)
+
     # ---- Original Lex flow (unchanged from your file) ----
     try:
         session_state = event.get('sessionState', {})
@@ -242,6 +273,7 @@ def lambda_handler(event, context):
         invocation_source = event.get('invocationSource')
         session_attributes = session_state.get('sessionAttributes', {})
         session_attributes['uiButtons'] = json.dumps([])
+
         if intent.get('name') == 'CancelBooking':
             return {
                 "sessionState": {
@@ -257,6 +289,7 @@ def lambda_handler(event, context):
                 "messages": [{"contentType": "PlainText",
                               "content": "No problem, I've canceled the process. Let me know if you need anything else!"}]
             }
+
         if invocation_source == 'DialogCodeHook':
             # (Same interceptors as your uploaded file — trimmed here for brevity;
             # keep the full body from your existing AngelLambda_updated.py.)
@@ -268,6 +301,7 @@ def lambda_handler(event, context):
                     "sessionAttributes": session_attributes
                 }
             }
+
         if invocation_source == 'FulfillmentCodeHook':
             return {
                 "sessionState": {
@@ -283,6 +317,7 @@ def lambda_handler(event, context):
                 "messages": [{"contentType": "PlainText",
                               "content": "Your request has been noted! Our executive will call you."}]
             }
+
     except Exception as e:
         print(f"ERROR: {str(e)}")
         return {

@@ -1,25 +1,26 @@
 /**
- * ApplianceCare — script.js
- * ─────────────────────────────────────────────
- * SETUP: set CONFIG.API_URL in config.js
+ * ApplianceCare — script.js  (frontend only; no business logic)
+ * ────────────────────────────────────────────────────────────────
+ * This file is intentionally "dumb":
+ *   • It sends the user's actions to the backend.
+ *   • It renders whatever the backend returns.
+ *   • It does NOT know the form schema, field labels, product list,
+ *     dates, times, or any validation rules — all of that lives in
+ *     the AWS Lambdas (AngelLambda.py / DhruvLambda.py).
  *
- * Architecture:
- *   USER → index.html → script.js
- *     ├─ API Manager       (callAPI)
- *     ├─ UI Renderer       (renderUser/renderBot/FormRenderer)
- *     ├─ Validation        (Validator)
- *     ├─ Workflow Manager  (Chat + FormFlow)
- *     └─ Chat Manager      (Chat)
- *
- * Dynamic form flow (added on top of the existing Lex chat flow):
- *   1. On bot pick → send INIT_<BOT>  → Lambda returns JSON schema.
- *   2. FormRenderer builds fields from schema → validates in real time.
- *   3. On submit  → send FORM_SUBMIT:<json> → Lambda validates + saves.
- *   4. Backend returns summary → confirm → success card with reference id.
- *   Existing chat/Lex flow is untouched; the form is an additive layer.
+ * Message protocol (see aws-lambdas/LexApiHandler.py):
+ *   1. User picks a bot → we send  `SELECT_BOT:<bot>`  then  `INIT_<BOT>`
+ *      → Lambda returns { sessionAttributes.formSchema } → we render it.
+ *   2. User clicks Continue → we send `FORM_SUBMIT:<json>`
+ *      → Lambda returns either { sessionAttributes.formErrors } (show inline)
+ *        or  { sessionAttributes.formSummary } (render review card).
+ *   3. User clicks Confirm → we send `FORM_CONFIRM:<json>`
+ *      → Lambda returns { sessionAttributes.formSuccess } (render success card).
+ *   4. Free-text chat is forwarded to AWS Lex, unchanged.
  */
-// Replace with your deployed AWS API Gateway URL
-const API_URL = "YOUR_API_GATEWAY_URL_HERE";
+
+const API_URL = (typeof CONFIG !== 'undefined' && CONFIG.API_URL) || '';
+
 const BOT_META = {
     angel:   { label: "Angel's Assistant",   color: '#7c6bff', initial: 'A' },
     krishna: { label: "Krishna's Assistant", color: '#ff8c42', initial: 'K' },
@@ -27,86 +28,13 @@ const BOT_META = {
 };
 
 const state = {
-    sessionId: makeId(),
-    activeBot: '',
-    loading:   false,
+    sessionId:  makeId(),
+    activeBot:  '',
+    loading:    false,
     formSchema: null,
     formValues: {},
     formSummary: null
 };
-
-const PRODUCT_OPTIONS = ["Refrigerator", "Television", "Washing Machine", "Dish Washer"];
-
-function getUpcomingBusinessDays(limit = 15) {
-    const days = [];
-    const date = new Date();
-    while (days.length < limit) {
-        date.setDate(date.getDate() + 1);
-        const day = date.getDay();
-        if (day === 0 || day === 6) continue;
-        const value = date.toISOString().slice(0, 10);
-        const text = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: '2-digit' });
-        days.push({ text, value });
-    }
-    return days;
-}
-
-function getStandardTimeSlots(start = 9, end = 17) {
-    const slots = [];
-    for (let h = start; h <= end; h++) {
-        const suffix = h < 12 ? 'AM' : 'PM';
-        const hour = h <= 12 ? h : h - 12;
-        const text = `${String(hour).padStart(2, '0')}:00 ${suffix}`;
-        slots.push({ text, value: text });
-    }
-    return slots;
-}
-
-function buildLocalFormSchema(botKey) {
-    const isDhruv = botKey === 'dhruv';
-    return {
-        botKey,
-        title: isDhruv ? 'Purchase consultation' : 'Book a consultation',
-        subtitle: isDhruv ? "Dhruv's Assistant — Purchase help" : "Angel's Assistant — Maintenance help",
-        fields: [
-            { name: 'FirstName', label: 'First name', type: 'text', required: true, maxLength: 40, placeholder: 'Jane' },
-            { name: 'LastName', label: 'Last name', type: 'text', required: true, maxLength: 40, placeholder: 'Doe' },
-            { name: 'PhoneNumber', label: 'Phone', type: 'phone', required: true, hint: '10 digits, numbers only' },
-            { name: isDhruv ? 'Email' : 'EmailAddress', label: 'Email', type: 'email', required: true, placeholder: 'you@example.com' },
-            {
-                name: 'ProductName', label: 'Product', type: 'chips', required: true,
-                options: PRODUCT_OPTIONS.map(p => ({ text: p, value: p }))
-            },
-            {
-                name: isDhruv ? 'PreferredDate' : 'Date', label: 'Preferred date', type: 'date-grid', required: true,
-                options: getUpcomingBusinessDays()
-            },
-            {
-                name: isDhruv ? 'PreferredTime' : 'Time', label: 'Preferred time', type: 'time-grid', required: true,
-                options: getStandardTimeSlots(9, isDhruv ? 20 : 17)
-            }
-        ]
-    };
-}
-
-function buildLocalSummary(values, schema) {
-    const fieldByName = Object.fromEntries((schema?.fields || []).map(f => [f.name, f]));
-    const emailName = fieldByName.Email ? 'Email' : 'EmailAddress';
-    const dateName = fieldByName.PreferredDate ? 'PreferredDate' : 'Date';
-    const timeName = fieldByName.PreferredTime ? 'PreferredTime' : 'Time';
-    return {
-        title: 'Confirm your consultation',
-        subtitle: 'Review the details before we book.',
-        rows: [
-            { label: 'Name', value: `${values.FirstName || ''} ${values.LastName || ''}`.trim() },
-            { label: 'Phone', value: values.PhoneNumber || '' },
-            { label: 'Email', value: values[emailName] || '' },
-            { label: 'Product', value: values.ProductName || '' },
-            { label: 'Date', value: values[dateName] || '' },
-            { label: 'Time', value: values[timeName] || '' }
-        ]
-    };
-}
 
 function makeId() {
     return 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
@@ -261,27 +189,43 @@ function hideTyping() { $('typing')?.remove(); }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 /* ═══════════════════════════════════════════════
-   API MANAGER
+   API MANAGER — one endpoint for everything
 ════════════════════════════════════════════════ */
 async function callAPI(message) {
-    if (!API_URL) throw new Error("API_URL not configured. Update the API_URL constant in script.js.");
+    if (!API_URL) throw new Error('API_URL not configured (edit public/config.js).');
     const res = await fetch(API_URL, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, sessionId: state.sessionId, activeBot: state.activeBot })
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} from ${API_URL} — ${body.slice(0, 200)}`);
+    }
     return res.json();
 }
 
+/**
+ * Route the backend response to the right renderer.
+ * The Lambda uses `sessionAttributes` to piggyback structured payloads:
+ *   formSchema   → render the input form
+ *   formErrors   → highlight fields the Lambda rejected
+ *   formSummary  → render the review card
+ *   formSuccess  → render the confirmation card
+ *   uiButtons    → attach quick-reply buttons to the last chat message
+ */
 function handleResponse(data) {
     if (data.activeBot) { state.activeBot = data.activeBot; setBadge(data.activeBot); }
 
-    // Dynamic-form payloads (schema / summary / success) — piggyback on sessionAttributes.
     const attrs = data.sessionAttributes || {};
+
     if (attrs.formSchema) {
         try { FormFlow.openWithSchema(JSON.parse(attrs.formSchema)); } catch (e) { console.error('bad formSchema', e); }
         return;
+    }
+    if (attrs.formErrors) {
+        try { FormFlow.showErrors(JSON.parse(attrs.formErrors)); } catch (e) { console.error('bad formErrors', e); }
+        // Also let any accompanying text bubbles render below.
     }
     if (attrs.formSummary) {
         try { FormFlow.showSummary(JSON.parse(attrs.formSummary)); } catch (e) { console.error('bad formSummary', e); }
@@ -293,7 +237,7 @@ function handleResponse(data) {
     }
 
     const messages = data.messages || [];
-    if (messages.length === 0) {
+    if (messages.length === 0 && !attrs.formErrors) {
         renderBot({ type: 'text', text: "I didn't catch that. Could you try again?" });
         return;
     }
@@ -310,53 +254,11 @@ function handleResponse(data) {
 }
 
 /* ═══════════════════════════════════════════════
-   VALIDATION
-════════════════════════════════════════════════ */
-const Validator = {
-    required(v)     { return v !== null && v !== undefined && String(v).trim() !== ''; },
-    minLength(v, n) { return String(v || '').trim().length >= n; },
-    maxLength(v, n) { return String(v || '').length <= n; },
-    email(v)        { return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(String(v || '').trim()); },
-    phone(v)        { return /^\d{10}$/.test(String(v || '').replace(/\D/g, '')); },
-    oneOf(v, opts)  { return opts.includes(v); },
-    date(v)         { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); },
-
-    field(field, value) {
-        if (field.required && !this.required(value)) return `${field.label} is required.`;
-        if (!value) return '';
-        if (field.type === 'email' && !this.email(value)) return 'Please enter a valid email.';
-        if (field.type === 'phone' && !this.phone(value)) return 'Enter exactly 10 digits.';
-        if (field.minLength && !this.minLength(value, field.minLength)) return `Minimum ${field.minLength} characters.`;
-        if (field.maxLength && !this.maxLength(value, field.maxLength)) return `Maximum ${field.maxLength} characters.`;
-        if (field.options && field.options.length && !this.oneOf(value, field.options.map(o => o.value ?? o))) {
-            return 'Please pick one of the options.';
-        }
-        return '';
-    }
-};
-
-/* ═══════════════════════════════════════════════
-   FORM RENDERER  (schema → HTML)
-   Schema shape:
-   {
-     "botKey": "angel",
-     "title": "Book a consultation",
-     "subtitle": "Fill in your details",
-     "fields": [
-       { "name": "FirstName", "label": "First name", "type": "text",  "required": true, "maxLength": 40 },
-       { "name": "PhoneNumber","label": "Phone",     "type": "phone", "required": true, "hint": "10 digits" },
-       { "name": "Email",     "label": "Email",      "type": "email", "required": true },
-       { "name": "ProductName","label": "Product",   "type": "chips", "required": true,
-         "options": [{"text":"Refrigerator","value":"Refrigerator"}, ...] },
-       { "name": "Date",      "label": "Date",       "type": "date-grid", "required": true,
-         "options": [{"text":"Mon, Jul 06","value":"2026-07-06"}, ...] },
-       { "name": "Time",      "label": "Time",       "type": "time-grid", "required": true,
-         "options": [{"text":"09:00 AM","value":"09:00 AM"}, ...] }
-     ]
-   }
+   FORM RENDERER — dumb schema → HTML converter
+   Field types supported: text, email, phone, select, chips, date-grid, time-grid.
+   The Lambda decides labels, options, order and requiredness.
 ════════════════════════════════════════════════ */
 function appendChatForm(cardEl, slotId) {
-    // Remove any previous form slot so we don't stack multiple form cards.
     document.querySelectorAll('.chat-form-slot').forEach(n => n.remove());
 
     const box = $('messages');
@@ -453,7 +355,6 @@ const FormRenderer = {
         el.placeholder = field.placeholder || '';
         if (field.maxLength) el.maxLength = field.maxLength;
         el.oninput = () => FormFlow.setValue(field.name, el.value);
-        el.onblur  = () => FormFlow.validateField(field.name);
         return el;
     },
 
@@ -461,15 +362,15 @@ const FormRenderer = {
         const el = document.createElement('select');
         el.className = 'form-select';
         el.innerHTML = `<option value="">Select…</option>` +
-            field.options.map(o => `<option value="${esc(o.value)}">${esc(o.text)}</option>`).join('');
-        el.onchange = () => { FormFlow.setValue(field.name, el.value); FormFlow.validateField(field.name); };
+            (field.options || []).map(o => `<option value="${esc(o.value)}">${esc(o.text)}</option>`).join('');
+        el.onchange = () => FormFlow.setValue(field.name, el.value);
         return el;
     },
 
     buildChips(field) {
         const grid = document.createElement('div');
         grid.className = 'chip-grid';
-        field.options.forEach(o => {
+        (field.options || []).forEach(o => {
             const b = document.createElement('button');
             b.type = 'button'; b.className = 'chip';
             b.textContent = o.text; b.dataset.value = o.value;
@@ -477,7 +378,6 @@ const FormRenderer = {
                 grid.querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
                 b.classList.add('selected');
                 FormFlow.setValue(field.name, o.value);
-                FormFlow.validateField(field.name);
             };
             grid.appendChild(b);
         });
@@ -487,7 +387,7 @@ const FormRenderer = {
     buildDateGrid(field) {
         const grid = document.createElement('div');
         grid.className = 'date-grid';
-        field.options.forEach(o => {
+        (field.options || []).forEach(o => {
             const parts = (o.text || '').split(/[, ]+/);
             const dow = parts[0] || '', mon = parts[1] || '', day = parts[2] || '';
             const card = document.createElement('button');
@@ -498,7 +398,6 @@ const FormRenderer = {
                 grid.querySelectorAll('.date-card').forEach(c => c.classList.remove('selected'));
                 card.classList.add('selected');
                 FormFlow.setValue(field.name, o.value);
-                FormFlow.validateField(field.name);
             };
             grid.appendChild(card);
         });
@@ -508,7 +407,7 @@ const FormRenderer = {
     buildTimeGrid(field) {
         const grid = document.createElement('div');
         grid.className = 'time-grid';
-        field.options.forEach(o => {
+        (field.options || []).forEach(o => {
             const b = document.createElement('button');
             b.type = 'button'; b.className = 'time-btn';
             b.textContent = o.text; b.dataset.value = o.value;
@@ -516,17 +415,23 @@ const FormRenderer = {
                 grid.querySelectorAll('.time-btn').forEach(c => c.classList.remove('selected'));
                 b.classList.add('selected');
                 FormFlow.setValue(field.name, o.value);
-                FormFlow.validateField(field.name);
             };
             grid.appendChild(b);
         });
         return grid;
     },
 
+    /**
+     * Progress bar + Submit button gating.
+     * We ONLY check that required fields have a non-empty value — no format
+     * checks, no regex, no product/date matching. The Lambda owns all real
+     * validation and returns `formErrors` if anything is wrong.
+     */
     updateProgress() {
         const schema = state.formSchema; if (!schema) return;
-        const required = schema.fields.filter(f => f.required);
-        const filled = required.filter(f => Validator.field(f, state.formValues[f.name]) === '' && Validator.required(state.formValues[f.name])).length;
+        const required = (schema.fields || []).filter(f => f.required);
+        const isFilled = v => v !== null && v !== undefined && String(v).trim() !== '';
+        const filled = required.filter(f => isFilled(state.formValues[f.name])).length;
         const pct = required.length ? Math.round((filled / required.length) * 100) : 100;
         const bar = $('formProgress'); if (bar) bar.style.width = pct + '%';
         const btn = $('formSubmitBtn'); if (btn) btn.disabled = pct < 100;
@@ -536,8 +441,17 @@ const FormRenderer = {
         const wrap = document.querySelector(`.form-field[data-name="${CSS.escape(name)}"]`);
         if (!wrap) return;
         wrap.classList.toggle('error', !!message);
-        wrap.classList.toggle('valid', !message && Validator.required(state.formValues[name]));
-        wrap.querySelector('.form-error-msg').textContent = message || '';
+        wrap.classList.toggle('valid', !message);
+        const el = wrap.querySelector('.form-error-msg');
+        if (el) el.textContent = message || '';
+    },
+
+    clearAllErrors() {
+        document.querySelectorAll('.form-field').forEach(w => {
+            w.classList.remove('error');
+            const el = w.querySelector('.form-error-msg');
+            if (el) el.textContent = '';
+        });
     },
 
     renderSummary(summary) {
@@ -581,49 +495,36 @@ const FormRenderer = {
 
 /* ═══════════════════════════════════════════════
    FORM FLOW (workflow manager for the form)
+   All decisions happen server-side; this just moves data around.
 ════════════════════════════════════════════════ */
 const FormFlow = {
     openWithSchema(schema) { FormRenderer.build(schema); },
 
-    openLocalFallback(botKey) { FormRenderer.build(buildLocalFormSchema(botKey)); },
-
     setValue(name, value) {
         state.formValues[name] = value;
         FormRenderer.updateProgress();
-    },
-
-    validateField(name) {
-        const field = state.formSchema.fields.find(f => f.name === name);
-        if (!field) return true;
-        const msg = Validator.field(field, state.formValues[name]);
-        FormRenderer.showError(name, msg);
-        return !msg;
-    },
-
-    validateAll() {
-        let ok = true;
-        state.formSchema.fields.forEach(f => { if (!this.validateField(f.name)) ok = false; });
-        return ok;
+        // Clear any previous server-side error on this field once the user edits it.
+        FormRenderer.showError(name, '');
     },
 
     async submit() {
-        if (!this.validateAll()) return;
-        const btn = $('formSubmitBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
-        if (!API_URL) {
-            this.showSummary(buildLocalSummary(state.formValues, state.formSchema));
-            return;
-        }
+        const btn = $('formSubmitBtn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+        FormRenderer.clearAllErrors();
         try {
             const payload = { bot: state.activeBot, values: state.formValues };
             const data = await callAPI('FORM_SUBMIT:' + JSON.stringify(payload));
             handleResponse(data);
-            // If backend hasn't been updated with FORM_SUBMIT support, no summary
-            // will be shown — fall back to the local summary so the flow completes.
-            if (!state.formSummary) this.showSummary(buildLocalSummary(state.formValues, state.formSchema));
         } catch (e) {
-            console.warn('form submit fell back to local summary', e);
-            this.showSummary(buildLocalSummary(state.formValues, state.formSchema));
+            console.error('form submit failed', e);
+            renderBot({ type: 'text', text: '⚠ Could not submit the form. Please try again.' });
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Continue'; }
         }
+    },
+
+    showErrors(errors) {
+        Object.entries(errors || {}).forEach(([name, msg]) => FormRenderer.showError(name, msg));
     },
 
     showSummary(summary) {
@@ -634,25 +535,13 @@ const FormFlow = {
     editAgain() { if (state.formSchema) FormRenderer.build(state.formSchema); },
 
     async confirm() {
-        if (!API_URL) {
-            this.showSuccess({
-                title: 'Booking confirmed!',
-                message: 'Our executive will call you at the scheduled time.',
-                referenceId: 'LOCAL-' + Math.random().toString(36).slice(2, 8).toUpperCase()
-            });
-            return;
-        }
         try {
             const payload = { bot: state.activeBot, values: state.formValues, confirmed: true };
             const data = await callAPI('FORM_CONFIRM:' + JSON.stringify(payload));
             handleResponse(data);
         } catch (e) {
-            console.warn('form confirm fell back to local success', e);
-            this.showSuccess({
-                title: 'Booking confirmed!',
-                message: 'Our executive will call you at the scheduled time.',
-                referenceId: 'LOCAL-' + Math.random().toString(36).slice(2, 8).toUpperCase()
-            });
+            console.error('form confirm failed', e);
+            renderBot({ type: 'text', text: '⚠ Could not confirm the booking. Please try again.' });
         }
     },
 
@@ -660,8 +549,6 @@ const FormFlow = {
 
     cancel() { this.close(); },
 
-    // Done on the success card — keep the confirmation visible in the chat,
-    // just take the slot out of "active form" state and disable the button.
     finishSuccess(btnEl) {
         document.querySelectorAll('.chat-form-slot').forEach(n => n.classList.remove('chat-form-slot'));
         if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Done ✓'; }
@@ -690,50 +577,26 @@ const Chat = {
         renderUser(BOT_META[botKey].label);
         showTyping();
         state.loading = true;
-        if (!API_URL) {
-            hideTyping();
-            renderBot({
-                type: 'text',
-                text: `Hi! You are now connected to ${BOT_META[botKey].label}. You can fill in the form below or type 'Book an appointment'.`
-            });
-            if (botKey === 'angel' || botKey === 'dhruv') FormFlow.openLocalFallback(botKey);
-            state.loading = false;
-            return;
-        }
         try {
-            // Select the bot on the Lex side (keeps existing chat flow working).
+            // 1) Tell the router which bot is active (unlocks the Lex path).
             const selectRes = await callAPI(`SELECT_BOT:${botKey}`);
             hideTyping();
             handleResponse(selectRes);
-        } catch (e) {
-            hideTyping();
-            renderBot({
-                type: 'text',
-                text: `Hi! You are now connected to ${BOT_META[botKey].label}. You can fill in the form below or type 'Book an appointment'.`
-            });
-            if (botKey === 'angel' || botKey === 'dhruv') FormFlow.openLocalFallback(botKey);
-            console.warn(e);
-            state.loading = false;
-            return;
-        }
 
-        // Then request a dynamic form schema from that bot's Lambda. If the deployed
-        // router has not been given Lambda invoke permission/ARNs yet, still show the
-        // same schema locally so the form appears instead of falling back to Lex only.
-        if (botKey === 'angel' || botKey === 'dhruv') {
-            showTyping();
-            try {
+            // 2) Ask the business Lambda for its form schema.
+            if (botKey === 'angel' || botKey === 'dhruv') {
+                showTyping();
                 const initRes = await callAPI(`INIT_${botKey.toUpperCase()}`);
                 hideTyping();
                 handleResponse(initRes);
-                if (!state.formSchema) FormFlow.openLocalFallback(botKey);
-            } catch (e) {
-                hideTyping();
-                FormFlow.openLocalFallback(botKey);
-                console.warn('INIT form request failed; rendered local schema fallback.', e);
             }
+        } catch (e) {
+            hideTyping();
+            renderBot({ type: 'text', text: '⚠ Could not reach the server. Check your connection and try again.' });
+            console.error(e);
+        } finally {
+            state.loading = false;
         }
-        state.loading = false;
     },
 
     send() {

@@ -1,20 +1,27 @@
 """
 LexApiHandler.py  —  updated router
+
 Adds bypass logic for the dynamic-form protocol:
   - "INIT_ANGEL" / "INIT_DHRUV"      → invoke the business Lambda directly (no Lex).
   - "FORM_SUBMIT:<json>"              → validate + save via business Lambda.
   - "FORM_CONFIRM:<json>"             → final confirm via business Lambda.
+
 Everything else keeps the original Lex flow untouched.
+
 ENV VARS EXPECTED:
   ANGEL_BOT_ID, DHRUV_BOT_ID, REGION           (as before)
   ANGEL_LAMBDA_ARN, DHRUV_LAMBDA_ARN           (new — for direct Lambda invoke)
 """
+
 import json
 import boto3
 import uuid
 import os
+
+
 # --------------------------------------------------------------------
-# Registry
+# Registry — one entry per bot. Reads its Lex ids and target Lambda ARN
+# from env vars set on the router Lambda in the AWS Console.
 # --------------------------------------------------------------------
 def get_registry():
     return {
@@ -33,15 +40,31 @@ def get_registry():
             'lambdaArn':  os.environ.get('DHRUV_LAMBDA_ARN', '')
         }
     }
+
+
 CORS_HEADERS = {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS'
 }
+
+
 def _ok(body):
     return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': json.dumps(body)}
+
+
+def _err_response(session_id, active_bot, text):
+    return _ok({
+        'messages': [{'contentType': 'PlainText', 'content': text}],
+        'sessionId': session_id, 'activeBot': active_bot, 'sessionAttributes': {}
+    })
+
+
 def _invoke_business_lambda(lambda_arn, region, payload):
-    """Direct invoke the target business Lambda with a FORM event."""
+    """
+    Direct-invoke the target business Lambda (Angel or Dhruv) with a form event.
+    The router does NOT know or duplicate the form schema — it is a pure proxy.
+    """
     client = boto3.client('lambda', region_name=region)
     resp = client.invoke(
         FunctionName=lambda_arn,
@@ -53,6 +76,8 @@ def _invoke_business_lambda(lambda_arn, region, payload):
         return json.loads(raw)
     except Exception:
         return {'error': 'invalid lambda response', 'raw': raw.decode('utf-8', 'ignore')}
+
+
 # --------------------------------------------------------------------
 # Handler
 # --------------------------------------------------------------------
@@ -62,7 +87,9 @@ def lambda_handler(event, context):
         user_message = body.get('message', '')
         session_id   = body.get('sessionId', str(uuid.uuid4()))
         active_bot   = body.get('activeBot', '')
+
         BOT_REGISTRY = get_registry()
+
         # ---------------- No bot selected yet ----------------
         if not active_bot and not user_message.startswith('SELECT_BOT:') \
                           and not user_message.startswith('INIT_') \
@@ -71,6 +98,7 @@ def lambda_handler(event, context):
                 'messages': [], 'sessionId': session_id,
                 'activeBot': '', 'sessionAttributes': {}
             })
+
         # ---------------- SELECT_BOT ----------------
         if user_message.startswith('SELECT_BOT:'):
             selected = user_message.split(':')[1].lower()
@@ -86,6 +114,7 @@ def lambda_handler(event, context):
                 'activeBot': selected,
                 'sessionAttributes': {}
             })
+
         # ---------------- DYNAMIC FORM BYPASS ----------------
         # INIT_ANGEL / INIT_DHRUV → get form schema
         if user_message.startswith('INIT_'):
@@ -95,10 +124,8 @@ def lambda_handler(event, context):
                             'activeBot': active_bot, 'sessionAttributes': {}})
             cfg = BOT_REGISTRY[bot_key]
             if not cfg['lambdaArn']:
-                return _ok({'messages': [{'contentType': 'PlainText',
-                            'content': f"Form service not configured for {bot_key}."}],
-                            'sessionId': session_id, 'activeBot': bot_key,
-                            'sessionAttributes': {}})
+                return _err_response(session_id, bot_key,
+                    f"{bot_key.title()} Lambda ARN not configured on the router.")
             result = _invoke_business_lambda(cfg['lambdaArn'], cfg['region'], {
                 'formAction': 'INIT', 'bot': bot_key, 'sessionId': session_id
             })
@@ -107,6 +134,7 @@ def lambda_handler(event, context):
                 'sessionId': session_id, 'activeBot': bot_key,
                 'sessionAttributes': result.get('sessionAttributes', {})
             })
+
         # FORM_SUBMIT:<json>  /  FORM_CONFIRM:<json>
         if user_message.startswith('FORM_SUBMIT:') or user_message.startswith('FORM_CONFIRM:'):
             action, _, raw = user_message.partition(':')
@@ -135,10 +163,12 @@ def lambda_handler(event, context):
                 'sessionId': session_id, 'activeBot': bot_key,
                 'sessionAttributes': result.get('sessionAttributes', {})
             })
+
         # ---------------- Normal Lex routing (unchanged) ----------------
         if active_bot not in BOT_REGISTRY:
             active_bot = 'angel'
         config = BOT_REGISTRY[active_bot]
+
         client = boto3.client('lexv2-runtime', region_name=config['region'])
         response = client.recognize_text(
             botId=config['botId'],
@@ -147,8 +177,10 @@ def lambda_handler(event, context):
             sessionId=f"{active_bot}-{session_id}",
             text=user_message
         )
+
         messages      = response.get('messages', [])
         session_attrs = response.get('sessionState', {}).get('sessionAttributes', {}) or {}
+
         if messages:
             last_message = messages[-1].get('content', '')
             if ("Your request has been noted"      in last_message or
@@ -158,12 +190,14 @@ def lambda_handler(event, context):
                     {"text": "Need More Assistance?",
                      "value": "https://www.icloudy.co/icloudy-contact-us/"}
                 ])
+
         return _ok({
             'messages': messages,
             'sessionId': session_id,
             'activeBot': active_bot,
             'sessionAttributes': session_attrs
         })
+
     except Exception as e:
         print(f"ERROR: {str(e)}")
         return {'statusCode': 500,
