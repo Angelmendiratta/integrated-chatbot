@@ -361,19 +361,6 @@ Finally update the API endpoint inside:
 frontend/script.js
 ```
 
----
-
-# Screenshots
-
-## Architecture
-
-![Architecture](docs/architecture.png)
-
-## AWS Request Flow
-
-![AWS Flow](docs/screenshots/aws_flow.png)
-
----
 
 # Future Improvements
 
