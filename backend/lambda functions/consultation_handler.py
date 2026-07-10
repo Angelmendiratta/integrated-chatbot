@@ -1,14 +1,3 @@
-"""
-AngelLambda.py — original Lex fulfillment PLUS dynamic-form handlers.
-
-The router (LexApiHandler) invokes this Lambda directly with a payload like:
-  { "formAction": "INIT" | "SUBMIT" | "CONFIRM",
-    "bot": "angel", "sessionId": "...", "values": { ... } }
-
-Any event WITHOUT `formAction` is treated as a normal Lex event and delegated
-to the original handler at the bottom of this file (unchanged behavior).
-"""
-
 import json
 import re
 import datetime
@@ -20,9 +9,9 @@ BOOKED_APPOINTMENTS = {
     "2026-07-01": ["10:00", "15:00", "16:00"]
 }
 
-VALID_PRODUCTS = ["Refrigerator", "Television", "Washing Machine", "Dish Washer"]
+VALID_PRODUCTS = ["Refrigerator", "Television", "Washing Machine", "Dishwasher"]
 
-# --- HELPER FUNCTIONS (unchanged) ---
+# --- HELPER FUNCTIONS ---
 def validate_phone(phone_number):
     if not phone_number: return False
     cleaned = ''.join(filter(str.isdigit, phone_number))
@@ -77,7 +66,7 @@ def get_available_times(date_str):
 def normalize_time(raw):
     if not raw: return ""
     raw = raw.strip()
-    match_24 = re.match(r'^(\d{1,2}):(\d{2})$', raw)
+    match_24 = re.match(r'^(\d{1,2}):(\d{2})(?::\d{2})?$', raw)
     if match_24: return f"{int(match_24.group(1)):02d}:{match_24.group(2)}"
     match_12 = re.match(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', raw, re.IGNORECASE)
     if match_12:
@@ -89,39 +78,34 @@ def normalize_time(raw):
 
 
 # =====================================================================
-# DYNAMIC FORM HANDLERS  (new — additive, do not change Lex logic)
+# DYNAMIC FORM HANDLERS 
 # =====================================================================
 
 def _form_schema():
-    """Return the JSON schema the frontend renders."""
-    _, date_buttons = get_business_days()
+    valid_dates, button_days = get_business_days()
+    date_options = button_days # Already formatted as [{"text": "...", "value": "..."}]
+
+    product_options = [{"text": p, "value": p} for p in VALID_PRODUCTS]
+    time_options = [{"text": t, "value": t} for t in ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00"]]
+
     return {
+        "title": "Schedule Your Consultation",
+        "submitLabel": "Confirm Booking",
         "botKey": "angel",
-        "title": "Book a consultation",
-        "subtitle": "Angel's Assistant — Maintenance help",
         "fields": [
-            {"name": "FirstName",   "label": "First name", "type": "text",
-             "required": True, "maxLength": 40, "placeholder": "Jane"},
-            {"name": "LastName",    "label": "Last name",  "type": "text",
-             "required": True, "maxLength": 40, "placeholder": "Doe"},
-            {"name": "PhoneNumber", "label": "Phone",      "type": "phone",
-             "required": True, "hint": "10 digits, numbers only"},
-            {"name": "EmailAddress","label": "Email",      "type": "email",
-             "required": True, "placeholder": "you@example.com"},
-            {"name": "ProductName", "label": "Product",    "type": "chips",
-             "required": True,
-             "options": [{"text": p, "value": p} for p in VALID_PRODUCTS]},
-            {"name": "Date",        "label": "Preferred date", "type": "date-grid",
-             "required": True, "options": date_buttons},
-            # Time list is all standard slots; the backend re-validates
-            # against real availability on submit.
-            {"name": "Time",        "label": "Preferred time", "type": "time-grid",
-             "required": True,
-             "options": [
-                 {"text": f"{(h if h <= 12 else h - 12):02d}:00 {'AM' if h < 12 else 'PM'}",
-                  "value": f"{(h if h <= 12 else h - 12):02d}:00 {'AM' if h < 12 else 'PM'}"}
-                 for h in range(9, 18)
-             ]}
+            { "name": "firstName", "type": "text", "label": "First Name", "required": True },
+            { "name": "lastName", "type": "text", "label": "Last Name", "required": True },
+            { "name": "gender", "type": "radio", "label": "Gender", "options": ["Male", "Female"], "required": True },
+            { "name": "phone", "type": "phone", "label": "Phone Number", "placeholder": "10 digits", "required": True },
+            { "name": "email", "type": "email", "label": "Email Address", "placeholder": "name@domain.com", "required": True },
+            { "name": "demoVideo", "type": "video-button", "label": "Watch Form Tutorial (YouTube)", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+            { "name": "appliance", "type": "select", "label": "Select Product", "options": product_options, "required": True },
+            { "name": "billImage", "type": "file", "label": "Upload Bill/Proof Image", "accept": "image/*" },
+            { "name": "problem", "type": "text", "label": "Briefly describe the issue (optional)", "placeholder": "e.g., The fridge stopped cooling..." },
+            { "name": "prefDate", "type": "select", "label": "Preferred Date", "options": date_options, "required": True },
+            { "name": "prefTime", "type": "select", "label": "Preferred Time", "options": time_options, "required": True },
+            { "name": "notifyPref", "type": "radio", "label": "How would you like your confirmation?", "options": ["📱 WhatsApp", "📧 Email", "Both"], "required": True },
+            { "name": "tnc", "type": "checkbox", "label": "I agree to the Terms & Conditions", "required": True }
         ]
     }
 
@@ -132,32 +116,33 @@ def _validate_form(values):
         if not values.get(name) or not str(values[name]).strip():
             errors[name] = f"{label} is required."
 
-    req("FirstName",    "First name")
-    req("LastName",     "Last name")
-    req("PhoneNumber",  "Phone")
-    req("EmailAddress", "Email")
-    req("ProductName",  "Product")
-    req("Date",         "Date")
-    req("Time",         "Time")
+    req("firstName",    "First name")
+    req("lastName",     "Last name")
+    req("phone",        "Phone")
+    req("email",        "Email")
+    req("appliance",    "Product")
+    req("prefDate",     "Date")
+    req("prefTime",     "Time")
 
-    phone = values.get("PhoneNumber", "")
+    phone = values.get("phone", "")
     if phone and not validate_phone(phone):
-        errors["PhoneNumber"] = "Enter exactly 10 digits."
-    email = values.get("EmailAddress", "")
+        errors["phone"] = "Enter exactly 10 digits."
+    email = values.get("email", "")
     if email and not validate_email(email):
-        errors["EmailAddress"] = "Enter a valid email address."
-    product = values.get("ProductName", "")
+        errors["email"] = "Enter a valid email address."
+    product = values.get("appliance", "")
     if product and product.lower() not in [p.lower() for p in VALID_PRODUCTS]:
-        errors["ProductName"] = "Unsupported product."
-    date_str = values.get("Date", "")
+        errors["appliance"] = "Unsupported product."
+    date_str = values.get("prefDate", "")
     valid_dates, _ = get_business_days()
     if date_str and date_str not in valid_dates:
-        errors["Date"] = "That date is unavailable."
-    time_str = values.get("Time", "")
+        errors["prefDate"] = "That date is unavailable."
+    time_str = values.get("prefTime", "")
     if date_str and time_str:
         avail = get_available_times(date_str)
-        if not any(t["text"].lower() == time_str.lower() for t in avail):
-            errors["Time"] = "That time slot is no longer available."
+        requested_time = normalize_time(time_str)
+        if not any(t["val_24h"] == requested_time for t in avail):
+            errors["prefTime"] = "That time slot is no longer available."
     return errors
 
 
@@ -167,9 +152,6 @@ def _save_booking(values, session_id):
     Returns a reference id.
     """
     ref = "AC-" + uuid.uuid4().hex[:8].upper()
-    # e.g.  boto3.resource('dynamodb').Table(os.environ['TABLE']).put_item(Item={
-    #     'referenceId': ref, 'sessionId': session_id, 'bot': 'angel', **values
-    # })
     print(f"[angel] booking saved ref={ref} session={session_id} values={values}")
     return ref
 
@@ -182,8 +164,16 @@ def _form_response(messages=None, session_attrs=None):
 
 
 def handle_form_event(event):
-    action = (event.get("formAction") or "").upper()
-    values = event.get("values", {}) or {}
+    action = event.get("formAction")
+    if not action and event.get("invocationSource") == "FastLane":
+        action = event.get("request", {}).get("type")
+    action = (action or "").upper()
+    
+    values = event.get("values")
+    if not values and event.get("invocationSource") == "FastLane":
+        values = event.get("request", {}).get("data")
+    values = values or {}
+    
     session_id = event.get("sessionId", "")
 
     if action == "INIT":
@@ -191,7 +181,7 @@ def handle_form_event(event):
         return _form_response(
             messages=[{"contentType": "PlainText",
                        "content": "Please fill in the form below to book your consultation."}],
-            session_attrs={"formSchema": json.dumps(schema)}
+            session_attrs={"formSchema": json.dumps(schema)} # Matches your JS exactly
         )
 
     if action == "SUBMIT":
@@ -202,16 +192,19 @@ def handle_form_event(event):
                            "content": "Please fix the highlighted fields."}],
                 session_attrs={"formErrors": json.dumps(errors)}
             )
+            
         summary = {
             "title": "Confirm your consultation",
             "subtitle": "Review the details before we book.",
             "rows": [
-                {"label": "Name",     "value": f"{values.get('FirstName','').title()} {values.get('LastName','').title()}"},
-                {"label": "Phone",    "value": values.get("PhoneNumber","")},
-                {"label": "Email",    "value": values.get("EmailAddress","")},
-                {"label": "Product",  "value": values.get("ProductName","")},
-                {"label": "Date",     "value": values.get("Date","")},
-                {"label": "Time",     "value": values.get("Time","")}
+                {"label": "Name",     "value": f"{values.get('firstName','').title()} {values.get('lastName','').title()}"},
+                {"label": "Gender",   "value": values.get("gender","")},
+                {"label": "Phone",    "value": values.get("phone","")},
+                {"label": "Email",    "value": values.get("email","")},
+                {"label": "Product",  "value": values.get("appliance","")},
+                {"label": "Date",     "value": values.get("prefDate","")},
+                {"label": "Time",     "value": values.get("prefTime","")},
+                {"label": "Notif",    "value": values.get("notifyPref","")}
             ]
         }
         return _form_response(session_attrs={"formSummary": json.dumps(summary)})
@@ -237,42 +230,170 @@ def handle_form_event(event):
 
 
 # =====================================================================
-# LEX FULFILLMENT (original — unchanged)
+# LEX FULFILLMENT — free-text chat path (buttons + validation)
 # =====================================================================
 
-def build_button_response(intent, slot_to_elicit, message_text, button_options, session_attributes=None):
-    attrs = dict(session_attributes) if session_attributes is not None else {}
-    if button_options:
-        lex_buttons = []
-        for opt in button_options[:15]:
-            if isinstance(opt, dict): lex_buttons.append({"text": opt["text"], "value": opt["value"]})
-            else: lex_buttons.append({"text": str(opt), "value": str(opt)})
-        attrs['uiButtons'] = json.dumps(lex_buttons)
-    else:
-        attrs['uiButtons'] = json.dumps([])
+ANGEL_SLOT_ORDER = ["FirstName", "LastName", "PhoneNumber",
+                    "EmailAddress", "ProductName", "Date", "Time"]
+
+def _slot_val(slots, name):
+    s = slots.get(name) if slots else None
+    if not s: return None
+    val = s.get("value", {}) or {}
+    return val.get("interpretedValue") or val.get("originalValue")
+
+def _buttons_for(slot_name, slots):
+    if slot_name == "ProductName":
+        return [{"text": p, "value": p} for p in VALID_PRODUCTS]
+    if slot_name == "Date":
+        _, days = get_business_days()
+        return days
+    if slot_name == "Time":
+        date_str = _slot_val(slots, "Date")
+        if not date_str: return []
+        return [{"text": t["text"], "value": t["text"]} for t in get_available_times(date_str)]
+    return []
+
+def _prompt_for(slot_name):
+    return {
+        "FirstName":    "What's your first name?",
+        "LastName":     "And your last name?",
+        "PhoneNumber":  "Please share a 10-digit phone number.",
+        "EmailAddress": "What's your email address?",
+        "ProductName":  "Which product are you interested in?",
+        "Date":         "Which date works for you?",
+        "Time":         "Great — pick a time slot."
+    }.get(slot_name, f"Please provide {slot_name}.")
+
+def _validate_slot(name, value, slots):
+    if value is None or str(value).strip() == "":
+        return None
+    if name == "PhoneNumber" and not validate_phone(value):
+        return "That doesn't look like a valid 10-digit phone number."
+    if name == "EmailAddress" and not validate_email(value):
+        return "That doesn't look like a valid email address."
+    if name == "ProductName":
+        if value.lower() not in [p.lower() for p in VALID_PRODUCTS]:
+            return f"'{value}' isn't a product we service. Please pick one below."
+    if name == "Date":
+        valid_dates, _ = get_business_days()
+        if value not in valid_dates:
+            return "That date isn't available. Please pick one below."
+    if name == "Time":
+        date_str = _slot_val(slots, "Date")
+        if date_str:
+            avail = get_available_times(date_str)
+            requested_time = normalize_time(value)
+            if not any(t["val_24h"] == requested_time for t in avail):
+                return "That time slot isn't available. Please pick one below."
+    return None
+
+def _elicit(intent, slots, slot_name, message, session_attrs):
+    buttons = _buttons_for(slot_name, slots)
+    attrs = dict(session_attrs or {})
+    attrs["uiButtons"] = json.dumps(buttons)
+    intent["slots"] = slots
     return {
         "sessionState": {
-            "dialogAction": {"type": "ElicitSlot", "slotToElicit": slot_to_elicit},
+            "dialogAction": {"type": "ElicitSlot", "slotToElicit": slot_name},
             "intent": intent,
             "sessionAttributes": attrs
         },
-        "messages": [{"contentType": "PlainText", "content": message_text}]
+        "messages": [{"contentType": "PlainText", "content": message}]
     }
 
+def _confirm_prompt(intent, slots, session_attrs):
+    attrs = dict(session_attrs or {})
+    attrs["uiButtons"] = json.dumps([
+        {"text": "Yes, book it",   "value": "yes"},
+        {"text": "No, cancel",     "value": "no"},
+        {"text": "Change Product", "value": "change product"},
+        {"text": "Change Date",    "value": "change date"},
+        {"text": "Change Time",    "value": "change time"},
+        {"text": "Change Phone",   "value": "change phone"},
+        {"text": "Change Email",   "value": "change email"}
+    ])
+    intent["confirmationState"] = "None"
+    intent["slots"] = slots
+    summary = (f"Please confirm: {_slot_val(slots,'FirstName')} {_slot_val(slots,'LastName')}, "
+               f"{_slot_val(slots,'ProductName')} on {_slot_val(slots,'Date')} at {_slot_val(slots,'Time')} "
+               f"(phone {_slot_val(slots,'PhoneNumber')}, email {_slot_val(slots,'EmailAddress')}).")
+    return {
+        "sessionState": {
+            "dialogAction": {"type": "ConfirmIntent"},
+            "intent": intent,
+            "sessionAttributes": attrs
+        },
+        "messages": [{"contentType": "PlainText", "content": summary}]
+    }
+
+_EDIT_KEYWORDS = {
+    "change product": "ProductName", "edit product": "ProductName",
+    "change date":    "Date",        "edit date":    "Date",
+    "change time":    "Time",        "edit time":    "Time",
+    "change phone":   "PhoneNumber", "edit phone":   "PhoneNumber",
+    "change email":   "EmailAddress","edit email":   "EmailAddress",
+    "change name":    "FirstName",   "edit name":    "FirstName"
+}
+_CONFIRM_YES = {"yes", "yes, book it", "book it", "confirm", "confirmed", "ok", "okay"}
+_CONFIRM_NO = {"no", "no, cancel", "cancel", "cancel booking", "stop"}
+
+def _all_slots_filled(slots):
+    return all(_slot_val(slots, name) is not None for name in ANGEL_SLOT_ORDER)
+
+def _close_confirmed(intent, slots, session_attrs, session_id):
+    values = {n: _slot_val(slots, n) for n in ANGEL_SLOT_ORDER}
+    errors = _validate_form(values)
+    if errors:
+        first_bad = next(iter(errors))
+        slots[first_bad] = None
+        return _elicit(intent, slots, first_bad, errors[first_bad], session_attrs)
+
+    ref = _save_booking(values, session_id)
+    return {
+        "sessionState": {
+            "dialogAction": {"type": "Close"},
+            "intent": {"name": intent.get('name'), "state": "Fulfilled"},
+            "sessionAttributes": {
+                "uiButtons": json.dumps([
+                    {"text": "Need More Assistance?",
+                     "value": "https://www.icloudy.co/icloudy-contact-us/"}
+                ])
+            }
+        },
+        "messages": [{"contentType": "PlainText",
+                      "content": f"Your booking is confirmed! Reference {ref}. Our executive will call you."}]
+    }
+
+def _close_cancelled(intent):
+    return {
+        "sessionState": {
+            "dialogAction": {"type": "Close"},
+            "intent": {"name": intent.get('name'), "state": "Fulfilled"},
+            "sessionAttributes": {
+                "uiButtons": json.dumps([
+                    {"text": "Need More Assistance?",
+                     "value": "https://www.icloudy.co/icloudy-contact-us/"}
+                ])
+            }
+        },
+        "messages": [{"contentType": "PlainText",
+                      "content": "No problem, I've canceled the process. Let me know if you need anything else!"}]
+    }
 
 def lambda_handler(event, context):
     # ---- Dynamic-form bypass ----
-    if isinstance(event, dict) and event.get("formAction"):
+    if isinstance(event, dict) and (event.get("formAction") or event.get("invocationSource") == "FastLane"):
         return handle_form_event(event)
 
-    # ---- Original Lex flow (unchanged from your file) ----
+    # ---- Lex flow ----
     try:
         session_state = event.get('sessionState', {})
         intent = session_state.get('intent', {})
-        slots = intent.get('slots', {})
+        slots = intent.get('slots', {}) or {}
         invocation_source = event.get('invocationSource')
-        session_attributes = session_state.get('sessionAttributes', {})
-        session_attributes['uiButtons'] = json.dumps([])
+        session_attributes = session_state.get('sessionAttributes', {}) or {}
+        input_transcript = (event.get('inputTranscript') or '').strip().lower()
 
         if intent.get('name') == 'CancelBooking':
             return {
@@ -291,32 +412,32 @@ def lambda_handler(event, context):
             }
 
         if invocation_source == 'DialogCodeHook':
-            # (Same interceptors as your uploaded file — trimmed here for brevity;
-            # keep the full body from your existing AngelLambda_updated.py.)
-            session_attributes['uiButtons'] = json.dumps([])
-            return {
-                "sessionState": {
-                    "dialogAction": {"type": "Delegate"},
-                    "intent": intent,
-                    "sessionAttributes": session_attributes
-                }
-            }
+            if _all_slots_filled(slots):
+                if input_transcript in _CONFIRM_YES or intent.get('confirmationState') == 'Confirmed':
+                    return _close_confirmed(intent, slots, session_attributes, event.get('sessionId', ''))
+                if input_transcript in _CONFIRM_NO or intent.get('confirmationState') == 'Denied':
+                    return _close_cancelled(intent)
+
+            if input_transcript in _EDIT_KEYWORDS:
+                target = _EDIT_KEYWORDS[input_transcript]
+                slots[target] = None
+                return _elicit(intent, slots, target, _prompt_for(target), session_attributes)
+
+            for name in ANGEL_SLOT_ORDER:
+                val = _slot_val(slots, name)
+                err = _validate_slot(name, val, slots)
+                if err:
+                    slots[name] = None
+                    return _elicit(intent, slots, name, err, session_attributes)
+
+            for name in ANGEL_SLOT_ORDER:
+                if _slot_val(slots, name) is None:
+                    return _elicit(intent, slots, name, _prompt_for(name), session_attributes)
+
+            return _confirm_prompt(intent, slots, session_attributes)
 
         if invocation_source == 'FulfillmentCodeHook':
-            return {
-                "sessionState": {
-                    "dialogAction": {"type": "Close"},
-                    "intent": {"name": intent.get('name'), "state": "Fulfilled"},
-                    "sessionAttributes": {
-                        "uiButtons": json.dumps([
-                            {"text": "Need More Assistance?",
-                             "value": "https://www.icloudy.co/icloudy-contact-us/"}
-                        ])
-                    }
-                },
-                "messages": [{"contentType": "PlainText",
-                              "content": "Your request has been noted! Our executive will call you."}]
-            }
+            return _close_confirmed(intent, slots, session_attributes, event.get('sessionId', ''))
 
     except Exception as e:
         print(f"ERROR: {str(e)}")
