@@ -236,11 +236,34 @@ def handle_form_event(event):
 ANGEL_SLOT_ORDER = ["FirstName", "LastName", "PhoneNumber",
                     "EmailAddress", "ProductName", "Date", "Time"]
 
+LEX_TO_FORM_FIELD = {
+    "FirstName": "firstName",
+    "LastName": "lastName",
+    "PhoneNumber": "phone",
+    "EmailAddress": "email",
+    "ProductName": "appliance",
+    "Date": "prefDate",
+    "Time": "prefTime"
+}
+
+FORM_TO_LEX_SLOT = {form_name: slot_name for slot_name, form_name in LEX_TO_FORM_FIELD.items()}
+
 def _slot_val(slots, name):
     s = slots.get(name) if slots else None
     if not s: return None
     val = s.get("value", {}) or {}
     return val.get("interpretedValue") or val.get("originalValue")
+
+def _lex_values_to_form_values(slots):
+    return {form_name: _slot_val(slots, slot_name)
+            for slot_name, form_name in LEX_TO_FORM_FIELD.items()}
+
+def _lex_error_slot(form_errors):
+    for form_name in form_errors:
+        slot_name = FORM_TO_LEX_SLOT.get(form_name)
+        if slot_name:
+            return slot_name
+    return None
 
 def _buttons_for(slot_name, slots):
     if slot_name == "ProductName":
@@ -342,12 +365,14 @@ def _all_slots_filled(slots):
     return all(_slot_val(slots, name) is not None for name in ANGEL_SLOT_ORDER)
 
 def _close_confirmed(intent, slots, session_attrs, session_id):
-    values = {n: _slot_val(slots, n) for n in ANGEL_SLOT_ORDER}
+    values = _lex_values_to_form_values(slots)
     errors = _validate_form(values)
     if errors:
-        first_bad = next(iter(errors))
+        first_bad = _lex_error_slot(errors)
+        if not first_bad:
+            return _elicit(intent, slots, "FirstName", "Some details are invalid. Let's check them again.", session_attrs)
         slots[first_bad] = None
-        return _elicit(intent, slots, first_bad, errors[first_bad], session_attrs)
+        return _elicit(intent, slots, first_bad, errors.get(LEX_TO_FORM_FIELD[first_bad], _prompt_for(first_bad)), session_attrs)
 
     ref = _save_booking(values, session_id)
     return {
