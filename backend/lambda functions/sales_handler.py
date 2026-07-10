@@ -1,6 +1,5 @@
 """
-DhruvLambda.py — original Lex fulfillment PLUS dynamic-form handlers.
-Same protocol as AngelLambda:
+
   event = { "formAction": "INIT"|"SUBMIT"|"CONFIRM",
             "bot": "dhruv", "sessionId": "...", "values": {...} }
 """
