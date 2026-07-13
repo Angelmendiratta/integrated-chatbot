@@ -1,8 +1,3 @@
-"""
-
-  event = { "formAction": "INIT"|"SUBMIT"|"CONFIRM",
-            "bot": "dhruv", "sessionId": "...", "values": {...} }
-"""
 import json
 import re
 import datetime
@@ -102,7 +97,7 @@ def _form_schema():
             { "name": "lastName", "type": "text", "label": "Last Name", "required": True },
             { "name": "phone", "type": "phone", "label": "Phone Number", "placeholder": "10 digits", "required": True },
             { "name": "email", "type": "email", "label": "Email Address", "placeholder": "name@domain.com", "required": True },
-            { "name": "demoVideo", "type": "video-button", "label": "Watch Form Tutorial (YouTube)", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ" },
+            { "name": "demoVideo", "type": "video-button", "label": "Watch Form Tutorial (YouTube)", "url": "https://youtu.be/8C_kHJ5YEiA?si=wJz-u4AlBHB2IcUu" },
             { "name": "appliance", "type": "select", "label": "Select Product", "options": product_options, "required": True },
             { "name": "billImage", "type": "file", "label": "Upload Bill/Proof Image", "accept": "image/*" },
             { "name": "problem", "type": "text", "label": "Briefly describe the issue (optional)", "placeholder": "e.g., The fridge stopped cooling..." },
