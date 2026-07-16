@@ -47,7 +47,7 @@ function scrollBottom() {
     if (m) m.scrollTop = m.scrollHeight;
 }
 
-function setBadge(botKey) {     /**Updates the bot badge in the topbar**/
+function setBadge(botKey) {
     const badge = $('botBadge');
     const dot   = $('botBadgeDot');
     const name  = $('botBadgeName');
@@ -65,12 +65,12 @@ function addDateDivider() {
     box.appendChild(div);
 }
 
-function renderUser(text) {     /**Shows user's message in the chat */
+function renderUser(text) {
     const box = $('messages');
     const row = document.createElement('div');
     row.className = 'row user';
     row.innerHTML = `<div class="bubble">${esc(text)}</div>`;
-    box.appendChild(row);     /**appendChild() - Adds it to the messages area */
+    box.appendChild(row);
     scrollBottom();
 }
 
@@ -81,24 +81,25 @@ function renderUser(text) {     /**Shows user's message in the chat */
  * (text bubble, card, form, typing indicator).
  */
 function buildAvatar() {
-    /**Creates avatar (colored circle with letter) */
     const av = document.createElement('div');
     av.className = 'avatar';
     if (state.activeBot && BOT_META[state.activeBot]) {
         av.textContent      = BOT_META[state.activeBot].initial;
         av.style.background = `linear-gradient(135deg, ${BOT_META[state.activeBot].color}, #0070f3)`;
     } else {
-        av.textContent = '⚙';
+        av.textContent      = '⚙';
         av.style.background = 'linear-gradient(135deg, #00c4a7, #0070f3)';
     }
     return av;
 }
+
 function renderBot(content) {
     const box = $('messages');
     const row = document.createElement('div');
     row.className = 'row bot';
+
     const av = buildAvatar();
-    /**creates message content */
+
     let inner;
     if (content.type === 'welcome')     inner = buildWelcomeCard();
     else if (content.type === 'card')   inner = buildCardBubble(content.title, content.buttons);
@@ -116,7 +117,6 @@ function renderBot(content) {
     scrollBottom();
 }
 
-/**Creates the initial welcome screen */
 function buildWelcomeCard() {
     const card = document.createElement('div');
     card.className = 'welcome-card';
@@ -153,7 +153,6 @@ function buildWelcomeCard() {
     return card;
 }
 
-/**it creates ANY buttons the Lambda tells it to create */
 function buildCardBubble(title, buttons) {
     const wrap = document.createElement('div');
     wrap.className = 'card-bubble';
@@ -182,7 +181,6 @@ function buildCardBubble(title, buttons) {
     return wrap;
 }
 
-/**Bot is typing... animation comes from here */
 function showTyping() {
     const box = $('messages');
     const row = document.createElement('div');
@@ -198,9 +196,9 @@ function showTyping() {
 function hideTyping() { $('typing')?.remove(); }
 function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-/*API MANAGER — one endpoint for everything*/
-/**bridge between your website (the frontend) and your AWS backend */
-
+/* ═══════════════════════════════════════════════
+   API MANAGER — one endpoint for everything
+════════════════════════════════════════════════ */
 async function callAPI(message) {
     if (!API_URL) throw new Error('API_URL not configured (edit public/config.js).');
     const res = await fetch(API_URL, {
@@ -251,7 +249,7 @@ function handleResponse(data) {
         renderBot({ type: 'text', text: "I didn't catch that. Could you try again?" });
         return;
     }
-/**unpacks hidden buttons sent by the backend and attaches them directly underneath the very last text bubble in the chat. */
+
     let uiButtons = [];
     try { const raw = attrs.uiButtons; if (raw) uiButtons = JSON.parse(raw); } catch (e) { uiButtons = []; }
 
@@ -263,9 +261,11 @@ function handleResponse(data) {
     });
 }
 
-/* FORM RENDERER — dumb schema → HTML converter
+/* ═══════════════════════════════════════════════
+   FORM RENDERER — dumb schema → HTML converter
    Field types supported: text, email, phone, select, chips, date-grid, time-grid.
-   The Lambda decides labels, options, order and requiredness.*/
+   The Lambda decides labels, options, order and requiredness.
+════════════════════════════════════════════════ */
 function appendChatForm(cardEl, slotId) {
     document.querySelectorAll('.chat-form-slot').forEach(n => n.remove());
 
@@ -280,9 +280,6 @@ function appendChatForm(cardEl, slotId) {
     scrollBottom();
 }
 
-/**Main function to render the form
- * Saves schema to state for later
- */
 const FormRenderer = {
     build(schema) {
         state.formSchema = schema;
@@ -291,7 +288,6 @@ const FormRenderer = {
         const card = document.createElement('div');
         card.className = 'form-card chat-form-card';
 
-        /**Title + progress bar */
         const header = document.createElement('div');
         header.className = 'form-header';
         header.innerHTML = `
@@ -302,52 +298,47 @@ const FormRenderer = {
         `;
         card.appendChild(header);
 
-        /**Form fields */
         const body = document.createElement('div');
         body.className = 'form-body';
         schema.fields.forEach(f => body.appendChild(this.buildField(f)));
         card.appendChild(body);
 
-        /**cancel/continue buttons */
         const footer = document.createElement('div');
         footer.className = 'form-footer';
         footer.innerHTML = `
             <button class="form-btn secondary" onclick="FormFlow.cancel()">Cancel</button>
             <button class="form-btn primary" id="formSubmitBtn" onclick="FormFlow.submit()" disabled>Continue</button>
-        `;                                                                       /**continue is disabled initially */
+        `;
         card.appendChild(footer);
 
         appendChatForm(card, 'chatFormSlot');
         this.updateProgress();
     },
-   /**Lambda backend sends the JSON blueprint, this function takes those instructions and physically builds that specific field piece-by-piece. */
-   /**Label + Input + Hint + Error Box*/
-buildField(field) {
+
+    buildField(field) {
         const wrap = document.createElement('div');
         wrap.className = 'form-field';
         wrap.dataset.name = field.name;
-        
-        // Hide standard label for checkboxes and video buttons
-        if (field.type !== 'checkbox' && field.type !== 'video-button') {
-            const label = document.createElement('label');
-            label.className = 'form-label';
-            label.innerHTML = `${esc(field.label)}${field.required ? ' <span class="req">*</span>' : ''}`;
-            wrap.appendChild(label);
-        }
-        
+
+        const label = document.createElement('label');
+        label.className = 'form-label';
+        label.innerHTML = `${esc(field.label)}${field.required ? ' <span class="req">*</span>' : ''}`;
+        wrap.appendChild(label);
+
         let input;
         switch (field.type) {
-            case 'chips':       input = this.buildChips(field); break;
-            case 'date-grid':   input = this.buildDateGrid(field); break;
-            case 'time-grid':   input = this.buildTimeGrid(field); break;
-            case 'select':      input = this.buildSelect(field); break;
-            case 'checkbox':    input = this.buildCheckbox(field); break;     // NEW
-            case 'video-button': input = this.buildVideoButton(field); break; // NEW
-            case 'radio':       input = this.buildRadio(field); break;        // NEW
-            default:            input = this.buildInput(field);
+            case 'chips':     input = this.buildChips(field); break;
+            case 'date-grid': input = this.buildDateGrid(field); break;
+            case 'time-grid': input = this.buildTimeGrid(field); break;
+            case 'select':    input = this.buildSelect(field); break;
+            case 'radio':     input = this.buildRadio(field); break;
+            case 'checkbox':  input = this.buildCheckbox(field); break;
+            case 'file':      input = this.buildFile(field); break;
+            case 'textarea':  input = this.buildTextarea(field); break;
+            default:          input = this.buildInput(field);
         }
         wrap.appendChild(input);
-        
+
         if (field.hint) {
             const h = document.createElement('div');
             h.className = 'form-hint'; h.textContent = field.hint;
@@ -358,26 +349,17 @@ buildField(field) {
         wrap.appendChild(err);
         return wrap;
     },
-    /**Creates a simple text/email/phone input */
+
     buildInput(field) {
         const el = document.createElement('input');
-        if (field.type === 'file') {
-            el.type = 'file';
-            el.className = 'form-input file-input';
-            el.accept = field.accept || '*/*';
-            // Only send the file name string to AWS memory, not the whole file blob
-            el.onchange = () => FormFlow.setValue(field.name, el.files[0] ? el.files[0].name : '');
-        } else {
-            el.className = 'form-input';
-            el.type = (field.type === 'email') ? 'email' : (field.type === 'phone' ? 'tel' : 'text');
-            el.placeholder = field.placeholder || '';
-            if (field.maxLength) el.maxLength = field.maxLength;
-            el.oninput = () => FormFlow.setValue(field.name, el.value);
-        }
+        el.className = 'form-input';
+        el.type = (field.type === 'email') ? 'email' : (field.type === 'phone' ? 'tel' : 'text');
+        el.placeholder = field.placeholder || '';
+        if (field.maxLength) el.maxLength = field.maxLength;
+        el.oninput = () => FormFlow.setValue(field.name, el.value);
         return el;
     },
-    
-    /**selecting from options */
+
     buildSelect(field) {
         const el = document.createElement('select');
         el.className = 'form-select';
@@ -387,45 +369,86 @@ buildField(field) {
         return el;
     },
 
-    buildCheckbox(field) {
-        const cWrap = document.createElement('div');
-        cWrap.className = 'checkbox-group';
-        cWrap.innerHTML = `
-            <input type="checkbox" id="chk_${field.name}" name="${field.name}" class="checkbox-input" value="Yes" ${field.required ? 'required' : ''}>
-            <label for="chk_${field.name}" class="checkbox-label">${esc(field.label)} ${field.required ? '<span class="req">*</span>' : ''}</label>
-        `;
-        const chk = cWrap.querySelector('input');
-        chk.onchange = () => FormFlow.setValue(field.name, chk.checked ? 'Yes' : '');
-        return cWrap;
-    },
-
-    buildVideoButton(field) {
-        const vBtn = document.createElement('button');
-        vBtn.type = 'button';
-        vBtn.className = 'video-btn';
-        vBtn.innerHTML = `▶ ${esc(field.label)}`;
-        vBtn.onclick = () => window.open(field.url, '_blank');
-        FormFlow.setValue(field.name, 'Clicked'); // Auto-fills state so it doesn't block the submit button
-        return vBtn;
-    },
-
     buildRadio(field) {
-        const rWrap = document.createElement('div');
-        rWrap.className = 'radio-group';
-        (field.options || []).forEach((opt, idx) => {
-            const rId = `radio_${field.name}_${idx}`;
-            rWrap.innerHTML += `
-                <input type="radio" id="${rId}" name="${field.name}" value="${opt}" class="radio-input">
-                <label for="${rId}" class="radio-label">${esc(opt)}</label>
-            `;
+        const wrap = document.createElement('div');
+        wrap.className = 'radio-group';
+        (field.options || []).forEach((o, i) => {
+            const opt = (typeof o === 'string') ? { text: o, value: o } : o;
+            const id = `radio-${field.name}-${i}`;
+            const row = document.createElement('label');
+            row.className = 'radio-row';
+            row.setAttribute('for', id);
+            row.innerHTML = `<input type="radio" id="${id}" name="${esc(field.name)}" value="${esc(opt.value)}"><span class="radio-dot"></span><span class="radio-text">${esc(opt.text)}</span>`;
+            const input = row.querySelector('input');
+            input.onchange = () => {
+                wrap.querySelectorAll('.radio-row').forEach(r => r.classList.remove('selected'));
+                row.classList.add('selected');
+                FormFlow.setValue(field.name, opt.value);
+            };
+            wrap.appendChild(row);
         });
-        rWrap.querySelectorAll('input').forEach(radio => {
-            radio.onchange = () => FormFlow.setValue(field.name, radio.value);
-        });
-        return rWrap;
+        return wrap;
     },
 
-/**Creates selectable buttons (like product options: "Refrigerator", "TV", "Washing Machine") */
+    buildCheckbox(field) {
+        const row = document.createElement('label');
+        row.className = 'checkbox-row';
+        row.innerHTML = `<input type="checkbox"><span class="checkbox-box"></span><span class="checkbox-text">${esc(field.checkboxLabel || field.placeholder || 'I agree')}</span>`;
+        const input = row.querySelector('input');
+        input.onchange = () => {
+            row.classList.toggle('selected', input.checked);
+            FormFlow.setValue(field.name, input.checked ? 'true' : '');
+        };
+        return row;
+    },
+
+    buildFile(field) {
+        const wrap = document.createElement('div');
+        wrap.className = 'file-field';
+        const id = `file-${field.name}`;
+        wrap.innerHTML = `
+            <input type="file" id="${id}" class="file-input-hidden" ${field.accept ? `accept="${esc(field.accept)}"` : ''}>
+            <label for="${id}" class="file-drop">
+                <span class="file-icon">📎</span>
+                <span class="file-text">Click to upload${field.accept ? ` (${esc(field.accept)})` : ''}</span>
+            </label>
+            <div class="file-preview" style="display:none"></div>
+        `;
+        const input = wrap.querySelector('input');
+        const preview = wrap.querySelector('.file-preview');
+        const textEl = wrap.querySelector('.file-text');
+        input.onchange = () => {
+            const f = input.files && input.files[0];
+            if (!f) { FormFlow.setValue(field.name, ''); preview.style.display = 'none'; return; }
+            textEl.textContent = f.name;
+            FormFlow.setValue(field.name, f.name);
+            if (f.type && f.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    preview.innerHTML = `<img src="${e.target.result}" alt="preview">`;
+                    preview.style.display = 'block';
+                };
+                reader.readAsDataURL(f);
+            } else {
+                preview.style.display = 'none';
+            }
+        };
+        return wrap;
+    },
+
+    buildTextarea(field) {
+        const el = document.createElement('textarea');
+        el.className = 'form-input form-textarea';
+        el.rows = 3;
+        el.placeholder = field.placeholder || '';
+        if (field.maxLength) el.maxLength = field.maxLength;
+        el.oninput = () => FormFlow.setValue(field.name, el.value);
+        return el;
+    },
+
+
+
+
     buildChips(field) {
         const grid = document.createElement('div');
         grid.className = 'chip-grid';
@@ -443,7 +466,6 @@ buildField(field) {
         return grid;
     },
 
-    /**Creates a calendar-like grid of dates */
     buildDateGrid(field) {
         const grid = document.createElement('div');
         grid.className = 'date-grid';
@@ -463,7 +485,7 @@ buildField(field) {
         });
         return grid;
     },
-    /**Creates time slot buttons (like "09:00 AM", "10:00 AM", etc.) */
+
     buildTimeGrid(field) {
         const grid = document.createElement('div');
         grid.className = 'time-grid';
@@ -496,8 +518,7 @@ buildField(field) {
         const bar = $('formProgress'); if (bar) bar.style.width = pct + '%';
         const btn = $('formSubmitBtn'); if (btn) btn.disabled = pct < 100;
     },
-    
-    /**Shows error message below a field */
+
     showError(name, message) {
         const wrap = document.querySelector(`.form-field[data-name="${CSS.escape(name)}"]`);
         if (!wrap) return;
@@ -514,8 +535,7 @@ buildField(field) {
             if (el) el.textContent = '';
         });
     },
-    
-    /**Checkout screen */
+
     renderSummary(summary) {
         const card = document.createElement('div');
         card.className = 'form-card chat-form-card';
@@ -535,8 +555,7 @@ buildField(field) {
             </div>`;
         appendChatForm(card, 'chatFormSlot');
     },
-    
-    /**final receipt */
+
     renderSuccess(res) {
         const card = document.createElement('div');
         card.className = 'form-card chat-form-card';
@@ -556,11 +575,13 @@ buildField(field) {
     }
 };
 
-/* FORM FLOW (workflow manager for the form)
-   All decisions happen server-side; this just moves data around. */
+/* ═══════════════════════════════════════════════
+   FORM FLOW (workflow manager for the form)
+   All decisions happen server-side; this just moves data around.
+════════════════════════════════════════════════ */
 const FormFlow = {
     openWithSchema(schema) { FormRenderer.build(schema); },
-    /**Called when user fills any field */
+
     setValue(name, value) {
         state.formValues[name] = value;
         FormRenderer.updateProgress();
@@ -568,7 +589,6 @@ const FormFlow = {
         FormRenderer.showError(name, '');
     },
 
-    /**user clicks continue and it creates payload and sends to lambda */
     async submit() {
         const btn = $('formSubmitBtn');
         if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
@@ -588,8 +608,7 @@ const FormFlow = {
     showErrors(errors) {
         Object.entries(errors || {}).forEach(([name, msg]) => FormRenderer.showError(name, msg));
     },
-    
-    /**review card before submission */
+
     showSummary(summary) {
         state.formSummary = summary;
         FormRenderer.renderSummary(summary);
@@ -597,7 +616,6 @@ const FormFlow = {
 
     editAgain() { if (state.formSchema) FormRenderer.build(state.formSchema); },
 
-    /**called when booking is confirmed, lambda returns success message */
     async confirm() {
         try {
             const payload = { bot: state.activeBot, values: state.formValues, confirmed: true };
@@ -612,7 +630,7 @@ const FormFlow = {
     showSuccess(res) { FormRenderer.renderSuccess(res); },
 
     cancel() { this.close(); },
-    /**clicked done */
+
     finishSuccess(btnEl) {
         document.querySelectorAll('.chat-form-slot').forEach(n => n.classList.remove('chat-form-slot'));
         if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Done ✓'; }
