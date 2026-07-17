@@ -97,7 +97,7 @@ def _form_schema():
             { "name": "lastName", "type": "text", "label": "Last Name", "required": True },
             { "name": "phone", "type": "phone", "label": "Phone Number", "placeholder": "10 digits", "required": True },
             { "name": "email", "type": "email", "label": "Email Address", "placeholder": "name@domain.com", "required": True },
-            { "name": "demoVideo", "type": "video-button", "label": "Watch Form Tutorial (YouTube)", "url": "https://youtu.be/8C_kHJ5YEiA?si=wJz-u4AlBHB2IcUu" },
+            #{ "name": "demoVideo", "type": "video-button", "label": "Watch Form Tutorial (YouTube)", "url": "https://youtu.be/8C_kHJ5YEiA?si=wJz-u4AlBHB2IcUu" },
             { "name": "appliance", "type": "select", "label": "Select Product", "options": product_options, "required": True },
             { "name": "billImage", "type": "file", "label": "Upload Bill/Proof Image", "accept": "image/*" },
             { "name": "problem", "type": "text", "label": "Briefly describe the issue (optional)", "placeholder": "e.g., The fridge stopped cooling..." },
@@ -417,6 +417,13 @@ def lambda_handler(event, context):
         invocation_source = event.get('invocationSource')
         session_attributes = session_state.get('sessionAttributes', {}) or {}
         input_transcript = (event.get('inputTranscript') or '').strip().lower()
+
+        print(f"=== DHRUV LAMBDA CALLED ===")
+        print(f"Invocation Source: {event.get('invocationSource')}")
+        print(f"Input Transcript: {event.get('inputTranscript')}")
+        print(f"Slots: {json.dumps(event.get('sessionState', {}).get('intent', {}).get('slots', {}))}")
+        print(f"Session Attributes: {json.dumps(event.get('sessionState', {}).get('sessionAttributes', {}))}")
+        print(f"===========================")
 
         if intent.get('name') == 'CancelBooking':
             return {
