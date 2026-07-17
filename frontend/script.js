@@ -732,3 +732,34 @@ window.addEventListener('DOMContentLoaded', () => {
     addDateDivider();
     renderBot({ type: 'welcome' });
 });
+// Build YouTube iframe src from config — no hardcoding
+function initYouTubePlayer() {
+    const yt = CONFIG.YOUTUBE;
+    const params = new URLSearchParams({
+        controls:        yt.controls,
+        fs:              yt.fs,
+        rel:             yt.rel,
+        modestbranding:  yt.modestbranding,
+        cc_load_policy:  yt.cc_load_policy,
+        autoplay:        yt.autoplay
+    });
+    const iframe = document.getElementById('tutorialVideo');
+    if (iframe) {
+        iframe.src = `https://www.youtube.com/embed/${yt.videoId}?${params.toString()}`;
+    }
+}
+
+// Pause when tutorial is collapsed
+document.querySelector('.demo-video')?.addEventListener('toggle', function() {
+    if (!this.open) {
+        const iframe = document.getElementById('tutorialVideo');
+        if (iframe) {
+            const src = iframe.src;
+            iframe.src = '';
+            iframe.src = src;  // reloading src pauses the video
+        }
+    }
+});
+
+// Call on page load
+window.addEventListener('DOMContentLoaded', initYouTubePlayer);
