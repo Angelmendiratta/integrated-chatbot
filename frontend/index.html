@@ -10,9 +10,6 @@
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════
-     CHAT SCREEN
-════════════════════════════════════════════════ -->
 <div class="app" id="app">
 
     <!-- Top bar -->
@@ -33,16 +30,24 @@
         </div>
     </header>
 
-    <!-- Demo video (embedded, plays in same tab) -->
+    <!-- Demo video -->
     <details class="demo-video">
         <summary>▶ Watch form tutorial</summary>
         <div class="demo-video-frame-wrap">
-            <iframe width="560" height="315" src="https://www.youtube.com/embed/70oYrSnRgoI?si=OQj8jZYdq5VY_eIv" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+            <iframe
+                id="tutorialVideo"
+                width="560"
+                height="315"
+                frameborder="0"
+                allowfullscreen
+                referrerpolicy="strict-origin-when-cross-origin"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            ></iframe>
+        </div>
     </details>
 
     <!-- Messages -->
     <main class="messages" id="messages"></main>
-
 
     <!-- Input -->
     <footer class="inputbar">
@@ -67,9 +72,7 @@
 
 </div>
 
-<!-- ═══════════════════════════════════════════════
-     RESTART CONFIRMATION MODAL
-════════════════════════════════════════════════ -->
+<!-- RESTART MODAL -->
 <div class="modal-overlay" id="restartModal" style="display: none;">
     <div class="modal-content">
         <h3 class="modal-title">Start a new booking?</h3>
@@ -83,5 +86,40 @@
 
 <script src="config.js"></script>
 <script src="script.js?v=9"></script>
+
+<script>
+    // Build YouTube iframe src from CONFIG — no hardcoding
+    function initYouTubePlayer() {
+        const yt = CONFIG.YOUTUBE;
+        const params = new URLSearchParams({
+            controls:        yt.controls,
+            fs:              yt.fs,
+            rel:             yt.rel,
+            modestbranding:  yt.modestbranding,
+            cc_load_policy:  yt.cc_load_policy,
+            autoplay:        yt.autoplay
+        });
+        const iframe = document.getElementById('tutorialVideo');
+        if (iframe) {
+            iframe.src = 'https://www.youtube.com/embed/' + yt.videoId + '?' + params.toString();
+        }
+    }
+
+    // Pause video when tutorial section is collapsed
+    document.querySelector('.demo-video').addEventListener('toggle', function() {
+        if (!this.open) {
+            const iframe = document.getElementById('tutorialVideo');
+            if (iframe) {
+                const src = iframe.src;
+                iframe.src = '';
+                iframe.src = src;
+            }
+        }
+    });
+
+    // Run on page load
+    initYouTubePlayer();
+</script>
+
 </body>
 </html>
